@@ -1,82 +1,96 @@
-﻿using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Mvc;
+using FileProcessingApi.Models;
+using FileProcessingApi.Services.Interfaces;
+using System.Diagnostics;
 
 namespace FileProcessingApi.Controllers
 {
-    public class FilesController : Controller
+    [ApiController]
+    [Route("api/[controller]")]
+    public class FilesController : ControllerBase
     {
-        // GET: FilesController
-        public ActionResult Index()
+        private readonly ILogService _logService;
+        private readonly IFileService _fileService;
+        private readonly ILogger<FilesController> _logger;
+
+        public FilesController(ILogService logService, IFileService fileService, ILogger<FilesController> logger)
         {
-            return View();
+            _logService = logService;
+            _fileService = fileService;
+            _logger = logger;
         }
 
-        // GET: FilesController/Details/5
-        public ActionResult Details(int id)
+        [HttpPost("upload")]
+        public async Task<IActionResult> UploadFile(IFormFile file)
         {
-            return View();
-        }
+            if (file == null || file.Length == 0)
+            {
+                return BadRequest(new { message = "No file uploaded or file is empty." });
+            }
 
-        // GET: FilesController/Create
-        public ActionResult Create()
-        {
-            return View();
-        }
+            var stopwatch = Stopwatch.StartNew();
+            int recordCount = 0;
+            decimal average = 0;
 
-        // POST: FilesController/Create
-        [HttpPost]
-        [ValidateAntiForgeryToken]
-        public ActionResult Create(IFormCollection collection)
-        {
             try
             {
-                return RedirectToAction(nameof(Index));
-            }
-            catch
-            {
-                return View();
-            }
-        }
+                using var streamReader = new StreamReader(file.OpenReadStream());
+                var lines = await streamReader.ReadToEndAsync();
+                var rows = lines.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
 
-        // GET: FilesController/Edit/5
-        public ActionResult Edit(int id)
-        {
-            return View();
-        }
+                var dataRows = rows.Skip(1).ToList();
+                recordCount = dataRows.Count;
 
-        // POST: FilesController/Edit/5
-        [HttpPost]
-        [ValidateAntiForgeryToken]
-        public ActionResult Edit(int id, IFormCollection collection)
-        {
-            try
-            {
-                return RedirectToAction(nameof(Index));
-            }
-            catch
-            {
-                return View();
-            }
-        }
+                if (recordCount > 0 && rows.Length > 0)
+                {
+                    // Dynamically find the column index for "Score" based on the header row
+                    var headerColumns = rows[0].Split(',');
+                    int scoreIndex = Array.FindIndex(headerColumns, h => h.Trim().Equals("Score", StringComparison.OrdinalIgnoreCase));
 
-        // GET: FilesController/Delete/5
-        public ActionResult Delete(int id)
-        {
-            return View();
-        }
+                    if (scoreIndex != -1)
+                    {
+                        decimal sum = 0;
+                        int validCount = 0;
+                        foreach (var row in dataRows)
+                        {
+                            var columns = row.Split(',');
+                            if (columns.Length > scoreIndex && decimal.TryParse(columns[scoreIndex], out var val))
+                            {
+                                sum += val;
+                                validCount++;
+                            }
+                        }
+                        average = validCount > 0 ? sum / validCount : 0;
+                    }
+                }
 
-        // POST: FilesController/Delete/5
-        [HttpPost]
-        [ValidateAntiForgeryToken]
-        public ActionResult Delete(int id, IFormCollection collection)
-        {
-            try
-            {
-                return RedirectToAction(nameof(Index));
+                stopwatch.Stop();
+
+                var response = new Response
+                {
+                    FileName = file.FileName,
+                    RecordsCount = recordCount,
+                    Average = average,
+                    ProcessingTimeMs = stopwatch.ElapsedMilliseconds
+                };
+
+                var processingData = new FileProcessingData
+                {
+                    FileName = response.FileName,
+                    RecordsCount = response.RecordsCount,
+                    Average = response.Average,
+                    ProcessingTimeMs = response.ProcessingTimeMs,
+                    CreatedDate = DateTimeOffset.UtcNow
+                };
+
+                _logService.LogProcessedFile(processingData);
+
+                return Ok(response);
             }
-            catch
+            catch (Exception ex)
             {
-                return View();
+                _logger.LogError(ex, "Error processing file {FileName}", file.FileName);
+                return StatusCode(500, new { message = "An error occurred while processing the file." });
             }
         }
     }

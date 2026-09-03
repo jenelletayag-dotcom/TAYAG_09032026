@@ -1,6 +1,10 @@
-﻿namespace FileProcessingApi.Services.Interfaces
+﻿using FileProcessingApi.Models;
+
+namespace FileProcessingApi.Services.Interfaces
 {
-    public class ILogService
+    public interface ILogService
     {
+        void LogProcessedFile(FileProcessingData data);
+        IEnumerable<FileProcessingData> GetProcessedFiles();
     }
 }

@@ -1,6 +1,11 @@
-﻿namespace FileProcessingApi.Services.Interfaces
+﻿using FileProcessingApi.Models;
+
+namespace FileProcessingApi.Services.Interfaces
 {
-    public class IFileService
+    public interface IFileService
     {
+        Task<Response> ProcessFileAsync(
+            IFormFile file,
+            CancellationToken cancellationToken);
     }
 }
