@@ -1,4 +1,6 @@
-﻿using FileProcessingApi.Models;
+﻿using System;
+using System.IO;
+using FileProcessingApi.Models;
 using FileProcessingApi.Services.Interfaces;
 
 namespace FileProcessingApi.Services
@@ -17,6 +19,17 @@ namespace FileProcessingApi.Services
             if (file == null || file.Length == 0)
                 throw new ArgumentException("No file uploaded.");
 
+            // Add checking for csv
+            var fileName = file.FileName ?? string.Empty;
+            var extension = Path.GetExtension(fileName);
+            var contentType = file.ContentType ?? string.Empty;
+
+            if (!string.Equals(extension, ".csv", StringComparison.OrdinalIgnoreCase)
+                && !contentType.Contains("csv", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ArgumentException("Only CSV files are supported.");
+            }
+
             var startTime = DateTimeOffset.UtcNow;
             var values = new List<decimal>();
             int recordsCount = 0;
@@ -25,6 +38,11 @@ namespace FileProcessingApi.Services
             using var reader = new StreamReader(stream);
 
             var header = await reader.ReadLineAsync(cancellationToken);
+
+            if (string.IsNullOrWhiteSpace(header) || (!header.Contains(',') && !header.TrimStart().StartsWith("\uFEFF") && !header.TrimStart().StartsWith("{" ) && !header.TrimStart().StartsWith("[")))
+            {
+                throw new ArgumentException("Only CSV files are supported.");
+            }
 
             while (!reader.EndOfStream)
             {
