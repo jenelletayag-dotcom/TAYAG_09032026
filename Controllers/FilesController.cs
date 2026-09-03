@@ -1,7 +1,8 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using System;
+using System.IO;
+using Microsoft.AspNetCore.Mvc;
 using FileProcessingApi.Models;
 using FileProcessingApi.Services.Interfaces;
-using System.Diagnostics;
 
 namespace FileProcessingApi.Controllers
 {
@@ -21,75 +22,41 @@ namespace FileProcessingApi.Controllers
         }
 
         [HttpPost("upload")]
-        public async Task<IActionResult> UploadFile(IFormFile file)
+        public async Task<IActionResult> UploadFile(IFormFile file, CancellationToken cancellationToken)
         {
             if (file == null || file.Length == 0)
             {
                 return BadRequest(new { message = "No file uploaded or file is empty." });
             }
 
-            var stopwatch = Stopwatch.StartNew();
-            int recordCount = 0;
-            decimal average = 0;
+            var fileName = file.FileName ?? string.Empty;
+            var extension = Path.GetExtension(fileName);
+            var contentType = file.ContentType ?? string.Empty;
+            var isCsvExtension = string.Equals(extension, ".csv", StringComparison.OrdinalIgnoreCase);
+            var isCsvContentType = contentType.IndexOf("csv", StringComparison.OrdinalIgnoreCase) >= 0;
+
+            if (!isCsvExtension && !isCsvContentType)
+            {
+                return BadRequest(new { message = "Only CSV files are supported." });
+            }
 
             try
             {
-                using var streamReader = new StreamReader(file.OpenReadStream());
-                var lines = await streamReader.ReadToEndAsync();
-                var rows = lines.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-
-                var dataRows = rows.Skip(1).ToList();
-                recordCount = dataRows.Count;
-
-                if (recordCount > 0 && rows.Length > 0)
-                {
-                    // Dynamically find the column index for "Score" based on the header row
-                    var headerColumns = rows[0].Split(',');
-                    int scoreIndex = Array.FindIndex(headerColumns, h => h.Trim().Equals("Score", StringComparison.OrdinalIgnoreCase));
-
-                    if (scoreIndex != -1)
-                    {
-                        decimal sum = 0;
-                        int validCount = 0;
-                        foreach (var row in dataRows)
-                        {
-                            var columns = row.Split(',');
-                            if (columns.Length > scoreIndex && decimal.TryParse(columns[scoreIndex], out var val))
-                            {
-                                sum += val;
-                                validCount++;
-                            }
-                        }
-                        average = validCount > 0 ? sum / validCount : 0;
-                    }
-                }
-
-                stopwatch.Stop();
-
-                var response = new Response
-                {
-                    FileName = file.FileName,
-                    RecordsCount = recordCount,
-                    Average = average,
-                    ProcessingTimeMs = stopwatch.ElapsedMilliseconds
-                };
-
-                var processingData = new FileProcessingData
-                {
-                    FileName = response.FileName,
-                    RecordsCount = response.RecordsCount,
-                    Average = response.Average,
-                    ProcessingTimeMs = response.ProcessingTimeMs,
-                    CreatedDate = DateTimeOffset.UtcNow
-                };
-
-                _logService.LogProcessedFile(processingData);
-
+                var response = await _fileService.ProcessFileAsync(file, cancellationToken);
                 return Ok(response);
+            }
+            catch (OperationCanceledException)
+            {
+                return StatusCode(499, new { message = "Request was cancelled." });
+            }
+            catch (ArgumentException ex)
+            {
+                _logger.LogWarning(ex, "Bad request while processing file");
+                return BadRequest(new { message = ex.Message });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error processing file {FileName}", file.FileName);
+                _logger.LogError(ex, "Error processing file {FileName}", file?.FileName);
                 return StatusCode(500, new { message = "An error occurred while processing the file." });
             }
         }

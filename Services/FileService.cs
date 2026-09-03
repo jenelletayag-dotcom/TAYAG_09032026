@@ -1,5 +1,4 @@
 ﻿using System;
-using System.IO;
 using FileProcessingApi.Models;
 using FileProcessingApi.Services.Interfaces;
 
@@ -19,17 +18,6 @@ namespace FileProcessingApi.Services
             if (file == null || file.Length == 0)
                 throw new ArgumentException("No file uploaded.");
 
-            // Add checking for csv
-            var fileName = file.FileName ?? string.Empty;
-            var extension = Path.GetExtension(fileName);
-            var contentType = file.ContentType ?? string.Empty;
-
-            if (!string.Equals(extension, ".csv", StringComparison.OrdinalIgnoreCase)
-                && !contentType.Contains("csv", StringComparison.OrdinalIgnoreCase))
-            {
-                throw new ArgumentException("Only CSV files are supported.");
-            }
-
             var startTime = DateTimeOffset.UtcNow;
             var values = new List<decimal>();
             int recordsCount = 0;
@@ -39,10 +27,19 @@ namespace FileProcessingApi.Services
 
             var header = await reader.ReadLineAsync(cancellationToken);
 
-            if (string.IsNullOrWhiteSpace(header) || (!header.Contains(',') && !header.TrimStart().StartsWith("\uFEFF") && !header.TrimStart().StartsWith("{" ) && !header.TrimStart().StartsWith("[")))
-            {
-                throw new ArgumentException("Only CSV files are supported.");
-            }
+            if (string.IsNullOrWhiteSpace(header))
+                throw new ArgumentException("CSV header is missing or empty. Expected a 'Score' header column.");
+
+            // Checking for Score header
+            var headerColumns = Array.ConvertAll(
+                header.Split(','),
+                h => h?.Trim().ToUpperInvariant() ?? string.Empty);
+            int valueIndex = Array.FindIndex(
+                headerColumns,
+                h => !string.IsNullOrWhiteSpace(h) && h.Equals("SCORE", StringComparison.Ordinal));
+
+            if (valueIndex < 0)
+                throw new ArgumentException("CSV must contain a 'Score' header column.");
 
             while (!reader.EndOfStream)
             {
@@ -56,7 +53,7 @@ namespace FileProcessingApi.Services
 
                 var parts = line.Split(',');
 
-                if (parts.Length > 1 && decimal.TryParse(parts[1].Trim(), out var parsedValue))
+                if (parts.Length > valueIndex && decimal.TryParse(parts[valueIndex].Trim(), out var parsedValue))
                 {
                     values.Add(parsedValue);
                 }
